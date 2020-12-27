@@ -1,6 +1,7 @@
 # -*- coding: binary -*-
 require 'msf/core/payload/apk'
 require 'active_support/core_ext/numeric/bytes'
+require 'msf/core/payload/windows/payload_db_conf'
 module Msf
 
   class PayloadGeneratorError < StandardError
@@ -68,6 +69,9 @@ module Msf
     # @!attribute  payload
     #   @return [String] The refname of the payload to generate
     attr_accessor :payload
+    # @!attribute  payload_module
+    #   @return [Module] The payload module object if applicable
+    attr_accessor :payload_module
     # @!attribute  platform
     #   @return [String] The platform to build the payload for
     attr_accessor :platform
@@ -148,8 +152,14 @@ module Msf
 
       @framework  = opts.fetch(:framework)
 
-      raise ArgumentError, "Invalid Payload Selected" unless payload_is_valid?
-      raise ::Msf::Simple::Buffer::BufferFormatError, "Invalid Format Selected" unless format_is_valid?
+      raise InvalidFormat, "invalid format: #{format}"  unless format_is_valid?
+      raise ArgumentError, "invalid payload: #{payload}" unless payload_is_valid?
+
+      # A side-effecto of running framework.payloads.create is that
+      # framework.payloads.keys gets pruned of unloadable payloads. So, we do it
+      # after checking payload_is_valid?, which refers to the cached keys.
+      @payload_module = framework.payloads.create(@payload)
+      raise ArgumentError, "unloadable payload: #{payload}" unless payload_module || @payload == 'stdin'
 
       # In smallest mode, override the payload @space & @encoder_space settings
       if @smallest
@@ -336,7 +346,6 @@ module Msf
     # produce a JAR or WAR file for the java payload.
     # @return [String] Java payload as a JAR or WAR file
     def generate_java_payload
-      payload_module = framework.payloads.create(payload)
       payload_module.datastore.import_options_from_hash(datastore)
       case format
       when "raw", "jar"
@@ -366,36 +375,47 @@ module Msf
     # methods in order based on the supplied options and returns the finished payload.
     # @return [String] A string containing the bytes of the payload in the format selected
     def generate_payload
+      if payload.include?("pingback") and framework.db.active == false
+        cli_print "[-] WARNING: UUID cannot be saved because database is inactive."
+      end
+
       if platform == "java" or arch == "java" or payload.start_with? "java/"
         raw_payload = generate_java_payload
-        cli_print "Payload size: #{raw_payload.length} bytes"
+        encoded_payload = raw_payload
         gen_payload = raw_payload
       elsif payload.start_with? "android/" and not template.blank?
         cli_print "Using APK template: #{template}"
         apk_backdoor = ::Msf::Payload::Apk.new
         raw_payload = apk_backdoor.backdoor_apk(template, generate_raw_payload)
-        cli_print "Payload size: #{raw_payload.length} bytes"
         gen_payload = raw_payload
       else
+        if payload_module.is_a?(Msf::Payload::Windows::PayloadDBConf)
+          payload_module.datastore.import_options_from_hash(datastore)
+          ds_opt = payload_module.datastore
+          cli_print("[!] Database is not active! Payload key and nonce must be manually set when creating handler") unless framework.db.active
+          cli_print("[-] Please ensure payload key and nonce match when setting up handler: #{ds_opt['ChachaKey']} - #{ds_opt['ChachaNonce']}")
+        end
+
         raw_payload = generate_raw_payload
         raw_payload = add_shellcode(raw_payload)
 
         if encoder != nil and encoder.start_with?("@")
-          encoded_payload = multiple_encode_payload(raw_payload)
+          raw_payload = multiple_encode_payload(raw_payload)
         else
-          encoded_payload = encode_payload(raw_payload)
+          raw_payload = encode_payload(raw_payload)
         end
         if padnops
-          @nops = nops - encoded_payload.length
+          @nops = nops - raw_payload.length
         end
-        encoded_payload = prepend_nops(encoded_payload)
-        cli_print "Payload size: #{encoded_payload.length} bytes"
-        gen_payload = format_payload(encoded_payload)
+        raw_payload = prepend_nops(raw_payload)
+        gen_payload = format_payload(raw_payload)
       end
+
+      cli_print "Payload size: #{raw_payload.length} bytes"
 
       if gen_payload.nil?
         raise PayloadGeneratorError, 'The payload could not be generated, check options'
-      elsif gen_payload.length > @space and not @smallest
+      elsif raw_payload.length > @space and not @smallest
         raise PayloadSpaceViolation, 'The payload exceeds the specified space'
       else
         if format.to_s != 'raw'
@@ -421,8 +441,6 @@ module Msf
         end
         stdin
       else
-        payload_module = framework.payloads.create(payload)
-
         chosen_platform = choose_platform(payload_module)
         if chosen_platform.platforms.empty?
           raise IncompatiblePlatform, "The selected platform is incompatible with the payload"

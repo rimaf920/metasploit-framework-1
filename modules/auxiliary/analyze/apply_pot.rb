@@ -3,11 +3,10 @@
 # Current source: https://github.com/rapid7/metasploit-framework
 ##
 
-require 'msf/core/auxiliary/jtr'
+require 'msf/core/auxiliary/password_cracker'
 
 class MetasploitModule < Msf::Auxiliary
-  #include Msf::Auxiliary::Report
-  include Msf::Auxiliary::JohnTheRipper
+  include Msf::Auxiliary::PasswordCracker
 
   def initialize
     super(
@@ -157,8 +156,10 @@ class MetasploitModule < Msf::Auxiliary
         end
       end
     end
-    cleanup_files.each do |f|
-      File.delete(f)
+    if datastore['DeleteTempFiles']
+      cleanup_files.each do |f|
+        File.delete(f)
+      end
     end
   end
 end

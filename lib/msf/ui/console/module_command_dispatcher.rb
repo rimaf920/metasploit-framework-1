@@ -126,7 +126,8 @@ module ModuleCommandDispatcher
       return
     end
 
-    ip_range_arg = args.shift || mod.datastore['RHOSTS'] || framework.datastore['RHOSTS'] || ''
+    ip_range_arg = args.join(' ') unless args.empty?
+    ip_range_arg ||= mod.datastore['RHOSTS'] || framework.datastore['RHOSTS'] || ''
     opt = Msf::OptAddressRange.new('RHOSTS')
 
     begin
@@ -234,7 +235,7 @@ module ModuleCommandDispatcher
         raise NotImplementedError, msg
       end
 
-      if (code and code.kind_of?(Array) and code.length > 1)
+      if (code && code.kind_of?(Msf::Exploit::CheckCode))
         if (code == Msf::Exploit::CheckCode::Vulnerable)
           print_good("#{peer_msg}#{code[1]}")
           # Restore RHOST for report_vuln
